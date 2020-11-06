@@ -8,8 +8,12 @@ This repository contains files to create a working Chrome Extension where the sc
 
 ## `sa_pageview`-function
 
-The auto collect feature is turned off and make a sa_pageview function available which you can set a path as parameter.
+The auto collect feature is turned off and make a `sa_pageview`-function available which you can set a path as parameter. For example `sa_pageview("/home")`. Make sure it's a valid path (starting with a `/`).
 
 ## Hostname
 
 For Simple Analytics you'll need a valid website name for every extension. Just use something like extension.example.com. Replace example.com with your own website name. Make sure to add this to your Simple Analytics dashboard as well.
+
+## Simple Analytics options
+
+Define your options in [`sa-options.js`](/sa-options.js)
