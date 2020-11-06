@@ -1,0 +1,19 @@
+{
+  "name": "Simple Analytics Chrome Extension Demo",
+  "description": "Demonstrates how you can use Simple Analytics within a Chrome extension",
+  "version": "1.0",
+  "manifest_version": 2,
+  "permissions": [],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "content_security_policy": "script-src 'self' https://scripts.simpleanalyticscdn.com; object-src 'self'; img-src 'self' https://queue.simpleanalyticscdn.com;",
+  "browser_action": {
+    "default_title": "Open demo",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "128-gray.png"
+  }
+}
