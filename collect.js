@@ -1,6 +1,14 @@
+/* Simple Analytics - Privacy friendly analytics (docs.simpleanalytics.com/script; 2021-04-24; e751; v7) */
+/* eslint-env browser */
+
 (function (window, overwriteOptions, baseUrl, apiUrlPrefix, version, saGlobal) {
-  if (!window) return;
   try {
+    // Only load our script once, customers can still send multiple page views
+    // with the sa_pageview function if they turn off auto collect.
+    var loadedVariable = saGlobal + "_loaded";
+    if (!window || window[loadedVariable] === true) return;
+    window[loadedVariable] = true;
+
     /////////////////////
     // PREDEFINED VARIABLES FOR BETTER MINIFICATION
     //
@@ -11,16 +19,17 @@
     var https = "https:";
     var pageviewsText = "pageview";
     var errorText = "error";
+    var slash = "/";
     var protocol = https + "//";
     var con = window.console;
     var doNotTrack = "doNotTrack";
-    var slash = "/";
     var nav = window.navigator;
     var loc = window.location;
     var locationHostname = loc.hostname;
     var doc = window.document;
     var userAgent = nav.userAgent;
     var notSending = "Not sending request ";
+    var fetchedHighEntropyValues = false;
     var encodeURIComponentFunc = encodeURIComponent;
     var decodeURIComponentFunc = decodeURIComponent;
     var stringify = JSON.stringify;
@@ -33,10 +42,15 @@
     var Height = "Height";
     var Width = "Width";
     var scroll = "scroll";
+    var trueText = "true";
+    var uaData = nav.userAgentData;
     var scrollHeight = scroll + Height;
     var offsetHeight = "offset" + Height;
     var clientHeight = "client" + Height;
     var clientWidth = "client" + Width;
+    var pagehide = "pagehide";
+    var platformText = "platform";
+    var platformVersionText = "platformVersion";
     var isBotAgent =
       /(bot|spider|crawl)/i.test(userAgent) && !/(cubot)/i.test(userAgent);
     var screen = window.screen;
@@ -53,10 +67,23 @@
       "phantom" in window ||
       isBotAgent;
 
+
     var payload = {
       version: version,
+      ua: userAgent,
     };
     if (bot) payload.bot = true;
+
+    payload.dev = false;
+    payload.extension = true;
+    payload.sri = false;
+
+    // Use User-Agent Client Hints for better privacy
+    // https://web.dev/user-agent-client-hints/
+    if (uaData) {
+      payload.mobile = uaData.mobile;
+      payload.brands = stringify(uaData.brands);
+    }
 
     /////////////////////
     // HELPER FUNCTIONS
@@ -89,6 +116,14 @@
           return v.toString(16);
         });
       }
+    };
+
+    var isFunction = function (func) {
+      return typeof func == "function";
+    };
+
+    var isString = function (string) {
+      return typeof string == "string";
     };
 
     var assign = function () {
@@ -132,7 +167,7 @@
 
         // Prepend a slash when it's missing
         var ignorePage =
-          ignorePageRaw[0] == "/" ? ignorePageRaw : "/" + ignorePageRaw;
+          ignorePageRaw[0] == slash ? ignorePageRaw : slash + ignorePageRaw;
 
         try {
           if (
@@ -154,6 +189,7 @@
     // Send data via image
     var sendData = function (data, callback) {
       data = assign(payload, data);
+
       var image = new Image();
       if (callback) {
         image.onerror = callback;
@@ -173,7 +209,9 @@
               encodeURIComponentFunc(data[key])
             );
           })
-          .join("&");
+          .join("&") +
+        "&time=" +
+        Date.now();
     };
 
     /////////////////////
@@ -237,10 +275,11 @@
     var mode = overwriteOptions.mode || attr(scriptElement, "mode");
 
     // Should we record Do Not Track visits?
-    var recordDnt = isBoolean(overwriteOptions.skipDnt)
-      ? overwriteOptions.skipDnt
-      : attr(scriptElement, "ignore-dnt") == "true" ||
-        attr(scriptElement, "skip-dnt") == "true";
+    var collectDnt = isBoolean(overwriteOptions.collectDnt)
+      ? overwriteOptions.collectDnt
+      : attr(scriptElement, "ignore-dnt") == trueText ||
+        attr(scriptElement, "skip-dnt") == trueText ||
+        attr(scriptElement, "collect-dnt") == trueText;
 
     // Customers can overwrite their hostname, here we check for that
     var definedHostname =
@@ -265,7 +304,7 @@
     // Make sure ignore pages is an array
     var ignorePages = Array.isArray(ignorePagesRaw)
       ? ignorePagesRaw
-      : typeof ignorePagesRaw == "string" && ignorePagesRaw.length
+      : isString(ignorePagesRaw) && ignorePagesRaw.length
       ? ignorePagesRaw.split(/, ?/)
       : [];
 
@@ -286,17 +325,6 @@
     // hostname was to hide that domain from referrer traffic
     if (definedHostname !== locationHostname)
       payload.hostname_original = locationHostname;
-
-    // Don't track when Do Not Track is set to true
-    if (!recordDnt && doNotTrack in nav && nav[doNotTrack] == "1")
-      return warn(notSending + "when " + doNotTrack + " is enabled");
-
-    // // Don't track when localhost or when it's an IP address
-    // if (
-    //   locationHostname.indexOf(".") == -1 ||
-    //   /^[0-9]+$/.test(locationHostname.replace(/\./g, ""))
-    // )
-    //   return warn(notSending + "from " + locationHostname);
 
     /////////////////////
     // SETUP INITIAL VARIABLES
@@ -331,22 +359,12 @@
     // We don't put msHidden in if duration block, because it's used outside of that functionality
     var msHidden = 0;
 
-    var hiddenStart;
-    window.addEventListener(
-      "visibilitychange",
-      function () {
-        if (doc.hidden) hiddenStart = now();
-        else msHidden += now() - hiddenStart;
-      },
-      false
-    );
-
     var sendBeaconText = "sendBeacon";
 
     var sendOnLeave = function (id, push) {
       var append = { type: "append", original_id: push ? id : lastPageId };
 
-      append[duration] = Math.round((now() - start + msHidden) / thousand);
+      append[duration] = Math.round((now() - start - msHidden) / thousand);
       msHidden = 0;
       start = now();
 
@@ -362,7 +380,19 @@
       }
     };
 
-    addEventListenerFunc("unload", sendOnLeave, false);
+    var hiddenStart;
+    window.addEventListener(
+      "visibilitychange",
+      function () {
+        if (doc.hidden) {
+          if (!("on" + pagehide in window)) sendOnLeave();
+          hiddenStart = now();
+        } else msHidden += now() - hiddenStart;
+      },
+      false
+    );
+
+    addEventListenerFunc(pagehide, sendOnLeave, false);
 
     var body = doc.body || {};
     var position = function () {
@@ -404,7 +434,15 @@
     //
 
     var getPath = function (overwrite) {
-      var path = overwrite || decodeURIComponentFunc(loc.pathname);
+      var path = "";
+
+      // decodeURIComponent can fail when having invalid characters
+      // https://github.com/simpleanalytics/roadmap/issues/462
+      try {
+        path = overwrite || decodeURIComponentFunc(loc.pathname);
+      } catch (e) {
+        // Do nothing
+      }
 
       // Ignore pages specified in data-ignore-pages
       if (shouldIgnore(path)) {
@@ -492,9 +530,9 @@
             perf[navigation] &&
             [1, 2].indexOf(perf[navigation].type) > -1;
 
-      // Check if referrer is the same as current hostname
+      // Check if referrer is the same as current real hostname (not the defined hostname!)
       var sameSite = referrer
-        ? referrer.split(slash)[0] == definedHostname
+        ? doc.referrer.split(slash)[2] == locationHostname
         : false;
 
       // We set unique variable based on pushstate or back navigation, if no match we check the referrer
@@ -502,7 +540,32 @@
 
       page = data;
 
-      sendPageView(isPushState, isPushState || userNavigated, sameSite);
+      var triggerSendPageView = function () {
+        fetchedHighEntropyValues = true;
+        sendPageView(isPushState, isPushState || userNavigated, sameSite);
+      };
+
+      if (!fetchedHighEntropyValues) {
+        // Request platform information if this is available
+        try {
+          if (uaData && isFunction(uaData.getHighEntropyValues)) {
+            uaData
+              .getHighEntropyValues([platformText, platformVersionText])
+              .then(function (highEntropyValues) {
+                payload.os_name = highEntropyValues[platformText];
+                payload.os_version = highEntropyValues[platformVersionText];
+                triggerSendPageView();
+              })
+              .catch(triggerSendPageView);
+          } else {
+            triggerSendPageView();
+          }
+        } catch (e) {
+          triggerSendPageView();
+        }
+      } else {
+        triggerSendPageView();
+      }
     };
 
     /////////////////////
@@ -578,17 +641,16 @@
     var validTypes = ["string", "number"];
 
     var sendEvent = function (event, callbackRaw) {
-      var isFunction = event instanceof Function;
-      var callback =
-        callbackRaw instanceof Function ? callbackRaw : function () {};
+      var eventIsFunction = isFunction(event);
+      var callback = isFunction(callbackRaw) ? callbackRaw : function () {};
 
-      if (validTypes.indexOf(typeof event) < 0 && !isFunction) {
+      if (validTypes.indexOf(typeof event) < 0 && !eventIsFunction) {
         warn("event is not a string: " + event);
         return callback();
       }
 
       try {
-        if (isFunction) {
+        if (eventIsFunction) {
           event = event();
           if (validTypes.indexOf(typeof event) < 0) {
             warn("event function output is not a string: " + event);
@@ -602,7 +664,7 @@
 
       event = ("" + event).replace(/[^a-z0-9]+/gi, "_").replace(/(^_|_$)/g, "");
 
-      if (event)
+      if (event) {
         sendData(
           assign(source, bot ? { bot: true } : {}, {
             type: "event",
@@ -612,6 +674,7 @@
           }),
           callback
         );
+      }
     };
 
     var defaultEventFunc = function (event, callback) {
@@ -630,8 +693,19 @@
     window[functionName] = defaultEventFunc;
 
     // Post events from the queue of the user defined function
-    for (var event in queue) sendEvent(queue[event]);
+    for (var event in queue) {
+      Array.isArray(queue[event])
+        ? sendEvent.apply(null, queue[event])
+        : sendEvent(queue[event]);
+    }
   } catch (e) {
     sendError(e);
   }
-})(window, saOptions || {}, "simpleanalyticscdn.com", "queue.", 4, "sa_event");
+})(
+  window,
+  {},
+  "simpleanalyticscdn.com",
+  "queue.",
+  "chrome_extension_7",
+  "sa_event"
+);
